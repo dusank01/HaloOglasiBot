@@ -12,8 +12,29 @@ BASE_SEARCH_URL = os.getenv("SEARCH_URL")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+CACHE_FILE = "seen_ads.json"
+
 if not all([BASE_SEARCH_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID]):
     raise ValueError("❌ Neke od varijabli nisu podešene u .env fajlu!")
+
+def load_seen_ads():
+    """Učitava prethodno sačuvane ID-jeve oglasa iz JSON fajla."""
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                return set(json.load(f))
+        except Exception as e:
+            print(f"⚠️ Greška pri čitanju {CACHE_FILE}: {e}")
+    return set()
+
+def save_seen_ads(seen_ads):
+    """Čuva osveženi skup ID-jeva oglasa u JSON fajl."""
+    try:
+        with open(CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(list(seen_ads), f, indent=2, ensure_ascii=False)
+        print(f"💾 Baza uspešno ažurirana. Ukupno zapamćeno {len(seen_ads)} oglasa.")
+    except Exception as e:
+        print(f"❌ Greška pri čuvanju {CACHE_FILE}: {e}")
 
 def send_telegram_message(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -33,7 +54,7 @@ def get_page_url(base_url, page_num):
         return base_url
     return f"{base_url}&page={page_num}" if "?" in base_url else f"{base_url}?page={page_num}"
 
-def scrape_all_available_pages():
+def scrape_and_notify_new_ads():
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
@@ -47,12 +68,15 @@ def scrape_all_available_pages():
         "partner-item"
     ]
 
-    total_ads_found = 0
-    all_ads = []
+    # Učitavamo ranije viđene oglase
+    previously_seen_ads = load_seen_ads()
+    updated_seen_ads = set(previously_seen_ads)
+    
+    new_ads_found = []
     seen_ids_in_this_run = set()
     
     page = 1
-    print("🔎 Pokrećem automatski skreping kroz SVE dostupne stranice...\n")
+    print("🔎 Pokrećem prokeru novih oglasa na Halo Oglasima...\n")
 
     while True:
         url = get_page_url(BASE_SEARCH_URL, page)
@@ -84,6 +108,17 @@ def scrape_all_available_pages():
             if not ad_id or ad_id in seen_ids_in_this_run:
                 continue
 
+            seen_ids_in_this_run.add(ad_id)
+            page_ads_count += 1
+            new_ids_on_this_page += 1
+
+            # Sakupljamo sve validne oglase radi ažuriranja baze
+            updated_seen_ads.add(ad_id)
+
+            # PROVERA: Ako je oglas već bio viđen u prethodnim pokretanjima, preskačemo slanje
+            if ad_id in previously_seen_ads:
+                continue
+
             # Izvlačenje naslova i linka
             title_element = ad.find(["h2", "h8", "h3"], class_=["ad-title", "product-title"])
             if not title_element:
@@ -111,14 +146,8 @@ def scrape_all_available_pages():
             date_element = ad.find("span", class_="publish-date") or ad.find("div", class_="publish-date") or ad.find("span", class_="time")
             publish_date = date_element.text.strip() if date_element else "Nepoznat datum"
 
-            total_ads_found += 1
-            page_ads_count += 1
-            new_ids_on_this_page += 1
-            seen_ids_in_this_run.add(ad_id)
-
-            all_ads.append({
-                "number": total_ads_found,
-                "page": page,
+            # Dodajemo oglas u listu NOVIH oglasa
+            new_ads_found.append({
                 "id": ad_id,
                 "title": title,
                 "price": price,
@@ -131,32 +160,20 @@ def scrape_all_available_pages():
             print(f"🛑 Na stranici {page} nema novih/jedinstvenih oglasa. Završeno skrepovanje.")
             break
 
-        print(f"   ✅ Na strani {page} pronađeno {page_ads_count} pravih oglasa.\n")
+        print(f"   ✅ Na strani {page} analizirano {page_ads_count} pravih oglasa.\n")
         page += 1
         time.sleep(1)
 
-    # --- ISPIS REZULTATA U TERMINALU ---
+    # --- ŠTAMPANJE I SLANJE NOTIFIKACIJA ZA NOVE OGLASE ---
     print("==================================================")
-    print(f"📋 USPEŠNO PRONAĐENO UKUPNO {total_ads_found} OGLASA KROZ {page - 1} STRANICA:")
-    print("==================================================\n")
-
-    for ad in all_ads:
-        print(f"{ad['number']}. [Strana {ad['page']}] [ID: {ad['id']}] {ad['title']}")
-        print(f"   💶 Cena: {ad['price']}")
-        if ad['location']:
-            print(f"   📍 Lokacija: {ad['location']}")
-        print(f"   🕒 Objavljeno: {ad['date']}")
-        print(f"   🔗 Link: {ad['link']}\n")
-
-    print("==================================================")
-
-    # --- SLANJE POSLEDNJIH 5 OBJAVLJENIH OGLASA NA TELEGRAM ---
-    latest_5_ads = all_ads[:5]
-    if latest_5_ads:
-        print(f"📲 Šaljem poslednjih {len(latest_5_ads)} najnovijih oglasa na Telegram...")
-        for ad in latest_5_ads:
+    if new_ads_found:
+        print(f"🎉 PRONAĐENO JE {len(new_ads_found)} POTPUNO NOVIH OGLASA!\n")
+        for idx, ad in enumerate(reversed(new_ads_found), start=1):
+            print(f"{idx}. [ID: {ad['id']}] {ad['title']} - {ad['price']}")
+            
+            # Slanje pojedinačne poruke na Telegram za svaki nov oglas
             msg = (
-                f"🏠 <b>Novi oglas za stan!</b>\n\n"
+                f"🚨 <b>NOVI OGLAS ZA STAN!</b>\n\n"
                 f"📌 <b>Naslov:</b> {ad['title']}\n"
                 f"💶 <b>Cena:</b> {ad['price']}\n"
             )
@@ -167,7 +184,14 @@ def scrape_all_available_pages():
                 f"🔗 <a href='{ad['link']}'>Pogledaj oglas na Halo Oglasima</a>"
             )
             send_telegram_message(msg)
-            time.sleep(1)  # Pauza od 1 sekunde između poruka
+            time.sleep(1) # Pauza od 1 sekunde između slanja poruka
+    else:
+        print("ℹ️ Nema novih oglasa od poslednje provere.")
+
+    print("==================================================")
+
+    # Čuvamo osveženi skup u seen_ads.json
+    save_seen_ads(updated_seen_ads)
 
 if __name__ == "__main__":
-    scrape_all_available_pages()
+    scrape_and_notify_new_ads()
