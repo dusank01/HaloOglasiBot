@@ -21,7 +21,7 @@ def send_telegram_message(text):
         "chat_id": TELEGRAM_CHAT_ID,
         "text": text,
         "parse_mode": "HTML",
-        "disable_web_page_preview": True
+        "disable_web_page_preview": False
     }
     try:
         requests.post(url, json=payload, timeout=10)
@@ -107,9 +107,7 @@ def scrape_all_available_pages():
             location_element = ad.find("ul", class_="subtitle-places")
             location = " | ".join([li.text.strip() for li in location_element.find_all("li")]) if location_element else ""
 
-            # -------------------------------------------------------------
-            # IZVLAČENJE DATUMA OBJAVE
-            # -------------------------------------------------------------
+            # Izvlačenje datuma objave
             date_element = ad.find("span", class_="publish-date") or ad.find("div", class_="publish-date") or ad.find("span", class_="time")
             publish_date = date_element.text.strip() if date_element else "Nepoznat datum"
 
@@ -151,6 +149,25 @@ def scrape_all_available_pages():
         print(f"   🔗 Link: {ad['link']}\n")
 
     print("==================================================")
+
+    # --- SLANJE POSLEDNJIH 5 OBJAVLJENIH OGLASA NA TELEGRAM ---
+    latest_5_ads = all_ads[:5]
+    if latest_5_ads:
+        print(f"📲 Šaljem poslednjih {len(latest_5_ads)} najnovijih oglasa na Telegram...")
+        for ad in latest_5_ads:
+            msg = (
+                f"🏠 <b>Novi oglas za stan!</b>\n\n"
+                f"📌 <b>Naslov:</b> {ad['title']}\n"
+                f"💶 <b>Cena:</b> {ad['price']}\n"
+            )
+            if ad['location']:
+                msg += f"📍 <b>Lokacija:</b> {ad['location']}\n"
+            msg += (
+                f"🕒 <b>Objavljeno:</b> {ad['date']}\n\n"
+                f"🔗 <a href='{ad['link']}'>Pogledaj oglas na Halo Oglasima</a>"
+            )
+            send_telegram_message(msg)
+            time.sleep(1)  # Pauza od 1 sekunde između poruka
 
 if __name__ == "__main__":
     scrape_all_available_pages()
