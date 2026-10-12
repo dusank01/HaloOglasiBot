@@ -10,12 +10,15 @@ load_dotenv()
 
 BASE_SEARCH_URL = os.getenv("SEARCH_URL")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+TELEGRAM_CHAT_IDS_RAW = os.getenv("TELEGRAM_CHAT_ID")
 
 CACHE_FILE = "seen_ads.json"
 
-if not all([BASE_SEARCH_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID]):
+if not all([BASE_SEARCH_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_IDS_RAW]):
     raise ValueError("❌ Neke od varijabli nisu podešene u .env fajlu!")
+
+# Razdvajanje više Chat ID-jeva iz stringa (npr. "123456,789012" -> ["123456", "789012"])
+TELEGRAM_CHAT_IDS = [chat_id.strip() for chat_id in TELEGRAM_CHAT_IDS_RAW.split(",") if chat_id.strip()]
 
 def load_seen_ads():
     """Učitava prethodno sačuvane ID-jeve oglasa iz JSON fajla."""
@@ -37,17 +40,20 @@ def save_seen_ads(seen_ads):
         print(f"❌ Greška pri čuvanju {CACHE_FILE}: {e}")
 
 def send_telegram_message(text):
+    """Šalje poruku na sve podešene Telegram naloge."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": text,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": False
-    }
-    try:
-        requests.post(url, json=payload, timeout=10)
-    except Exception as e:
-        print(f"Greška pri slanju poruke: {e}")
+    
+    for chat_id in TELEGRAM_CHAT_IDS:
+        payload = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": False
+        }
+        try:
+            requests.post(url, json=payload, timeout=10)
+        except Exception as e:
+            print(f"Greška pri slanju poruke na CHAT_ID {chat_id}: {e}")
 
 def get_page_url(base_url, page_num):
     if page_num == 1:
@@ -68,7 +74,6 @@ def scrape_and_notify_new_ads():
         "partner-item"
     ]
 
-    # Učitavamo ranije viđene oglase
     previously_seen_ads = load_seen_ads()
     updated_seen_ads = set(previously_seen_ads)
     
@@ -76,7 +81,7 @@ def scrape_and_notify_new_ads():
     seen_ids_in_this_run = set()
     
     page = 1
-    print("🔎 Pokrećem prokeru novih oglasa na Halo Oglasima...\n")
+    print(f"🔎 Pokrećem proveru novih oglasa na Halo Oglasima (Slanje na {len(TELEGRAM_CHAT_IDS)} Telegram naloga)...\n")
 
     while True:
         url = get_page_url(BASE_SEARCH_URL, page)
@@ -98,12 +103,10 @@ def scrape_and_notify_new_ads():
         new_ids_on_this_page = 0
 
         for ad in raw_ads:
-            # Preskakanje banera i reklama
             ad_classes = ad.get("class", [])
             if any(ignore_cls in ad_classes for ignore_cls in IGNORE_CLASSES):
                 continue
 
-            # Pravi oglasi moraju imati data-id
             ad_id = ad.get("data-id")
             if not ad_id or ad_id in seen_ids_in_this_run:
                 continue
@@ -112,14 +115,11 @@ def scrape_and_notify_new_ads():
             page_ads_count += 1
             new_ids_on_this_page += 1
 
-            # Sakupljamo sve validne oglase radi ažuriranja baze
             updated_seen_ads.add(ad_id)
 
-            # PROVERA: Ako je oglas već bio viđen u prethodnim pokretanjima, preskačemo slanje
             if ad_id in previously_seen_ads:
                 continue
 
-            # Izvlačenje naslova i linka
             title_element = ad.find(["h2", "h8", "h3"], class_=["ad-title", "product-title"])
             if not title_element:
                 title_element = ad.find("a", class_="product-link") or ad.find("a", class_="ad-link")
@@ -134,19 +134,15 @@ def scrape_and_notify_new_ads():
             title = a_tag.text.strip()
             link = "https://www.halooglasi.com" + a_tag["href"] if not a_tag["href"].startswith("http") else a_tag["href"]
 
-            # Izvlačenje cene
             price_element = ad.find("div", class_="central-feature") or ad.find("span", class_="price")
             price = price_element.text.strip().replace("\xa0", " ") if price_element else "Cena na upit"
 
-            # Izvlačenje lokacije
             location_element = ad.find("ul", class_="subtitle-places")
             location = " | ".join([li.text.strip() for li in location_element.find_all("li")]) if location_element else ""
 
-            # Izvlačenje datuma objave
             date_element = ad.find("span", class_="publish-date") or ad.find("div", class_="publish-date") or ad.find("span", class_="time")
             publish_date = date_element.text.strip() if date_element else "Nepoznat datum"
 
-            # Dodajemo oglas u listu NOVIH oglasa
             new_ads_found.append({
                 "id": ad_id,
                 "title": title,
@@ -164,14 +160,12 @@ def scrape_and_notify_new_ads():
         page += 1
         time.sleep(1)
 
-    # --- ŠTAMPANJE I SLANJE NOTIFIKACIJA ZA NOVE OGLASE ---
     print("==================================================")
     if new_ads_found:
         print(f"🎉 PRONAĐENO JE {len(new_ads_found)} POTPUNO NOVIH OGLASA!\n")
         for idx, ad in enumerate(reversed(new_ads_found), start=1):
             print(f"{idx}. [ID: {ad['id']}] {ad['title']} - {ad['price']}")
             
-            # Slanje pojedinačne poruke na Telegram za svaki nov oglas
             msg = (
                 f"🚨 <b>NOVI OGLAS ZA STAN!</b>\n\n"
                 f"📌 <b>Naslov:</b> {ad['title']}\n"
@@ -183,14 +177,14 @@ def scrape_and_notify_new_ads():
                 f"🕒 <b>Objavljeno:</b> {ad['date']}\n\n"
                 f"🔗 <a href='{ad['link']}'>Pogledaj oglas na Halo Oglasima</a>"
             )
+            # Slanje poruke svim nalozima
             send_telegram_message(msg)
-            time.sleep(1) # Pauza od 1 sekunde između slanja poruka
+            time.sleep(1)
     else:
         print("ℹ️ Nema novih oglasa od poslednje provere.")
 
     print("==================================================")
 
-    # Čuvamo osveženi skup u seen_ads.json
     save_seen_ads(updated_seen_ads)
 
 if __name__ == "__main__":
