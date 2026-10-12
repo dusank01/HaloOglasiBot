@@ -1,8 +1,7 @@
 # 1. Privatni podaci i tokeni (NIMAKO NE SLATI NA GITHUB)
 .env
 
-# 2. Lokalna baza viđenih oglasa (opciono, zavisi kako čuvate stanje)
-seen_ads.json
+
 
 # 3. Python virtuelno okruženje
 venv/
