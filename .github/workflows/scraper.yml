@@ -2,16 +2,16 @@ name: Halo Oglasi Scraper
 
 on:
   schedule:
-    # Pokreće se na svakih sat vremena od 04:00 do 22:00 UTC (~06:00 do 24:00 po lokalnom vremenu)
-    - cron: '0 4-22 * * *'
-  workflow_dispatch: # Omogućava i ručno pokretanje na dugme u GitHub-u
+    # Pokreće se na svakih 30 minuta od 04:00 do 22:00 UTC (~06:00 do 24:00 lokalno)
+    - cron: '*/30 4-22 * * *'
+  workflow_dispatch:
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
 
     permissions:
-      contents: write # Neophodna dozvola za upisivanje izmena u seen_ads.json
+      contents: write
 
     steps:
       - name: Preuzmi kod repozitorijuma
