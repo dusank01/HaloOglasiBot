@@ -4,7 +4,7 @@ import time
 import random
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
-from curl_cffi import requests  # Koristimo curl_cffi umesto običnog requests-a
+from curl_cffi import requests
 
 # Učitavanje varijabli iz .env fajla
 load_dotenv()
@@ -12,6 +12,7 @@ load_dotenv()
 BASE_SEARCH_URL = os.getenv("SEARCH_URL")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_IDS_RAW = os.getenv("TELEGRAM_CHAT_ID")
+PROXY_URL = os.getenv("PROXY_URL")
 
 CACHE_FILE = "seen_ads.json"
 
@@ -48,7 +49,6 @@ def send_telegram_message(text):
             "disable_web_page_preview": False
         }
         try:
-            # Običan requests za Telegram API ne pravi problem
             requests.post(url, json=payload, timeout=10)
         except Exception as e:
             print(f"Greška pri slanju poruke na CHAT_ID {chat_id}: {e}")
@@ -59,8 +59,16 @@ def get_page_url(base_url, page_num):
     return f"{base_url}&page={page_num}" if "?" in base_url else f"{base_url}?page={page_num}"
 
 def scrape_and_notify_new_ads():
-    # Kreiramo sesiju koja imitira Chrome 120 na nivou TLS rukovanja
-    session = requests.Session(impersonate="chrome120")
+    session = requests.Session(impersonate="chrome124")
+
+    # Priprema proxy podešavanja ako je PROXY_URL prosleđen
+    proxies = {
+        "http": PROXY_URL,
+        "https": PROXY_URL
+    } if PROXY_URL else None
+
+    if PROXY_URL:
+        print("🌐 Koristim proxy server za preusmeravanje zahteva...")
 
     IGNORE_CLASSES = [
         "banner-list-item", 
@@ -85,8 +93,7 @@ def scrape_and_notify_new_ads():
         print(f"📄 Učitavam stranicu {page}: {url}")
 
         try:
-            # Slanje zahteva sa potpunom imitacijom Chrome pregledača
-            response = session.get(url, timeout=15)
+            response = session.get(url, proxies=proxies, timeout=15)
             if response.status_code != 200:
                 print(f"❌ Greška pri dohvatanju stranice {page}: status {response.status_code}")
                 break
@@ -160,8 +167,6 @@ def scrape_and_notify_new_ads():
 
         print(f"   ✅ Na strani {page} analizirano {page_ads_count} pravih oglasa.\n")
         page += 1
-        
-        # Nasumična pauza od 2 do 4 sekunde između stranica radi prirodnijeg ponašanja
         time.sleep(random.uniform(2.0, 4.0))
 
     print("==================================================")
