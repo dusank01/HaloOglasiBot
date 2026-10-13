@@ -39,6 +39,7 @@ def save_seen_ads(seen_ads):
         print(f"❌ Greška pri čuvanju {CACHE_FILE}: {e}")
 
 def send_telegram_message(text):
+    """Šalje poruku na sve podešene Telegram naloge uz detaljan ispis rezultata."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     
     for chat_id in TELEGRAM_CHAT_IDS:
@@ -49,9 +50,13 @@ def send_telegram_message(text):
             "disable_web_page_preview": False
         }
         try:
-            requests.post(url, json=payload, timeout=10)
+            res = requests.post(url, json=payload, timeout=10)
+            if res.status_code == 200:
+                print(f"✅ Poruka uspešno poslata na CHAT_ID: {chat_id}")
+            else:
+                print(f"⚠️ Telegram API vratio status {res.status_code} za CHAT_ID {chat_id}: {res.text}")
         except Exception as e:
-            print(f"Greška pri slanju poruke na CHAT_ID {chat_id}: {e}")
+            print(f"❌ Greška pri slanju poruke na CHAT_ID {chat_id}: {e}")
 
 def get_page_url(base_url, page_num):
     if page_num == 1:
@@ -61,7 +66,6 @@ def get_page_url(base_url, page_num):
 def scrape_and_notify_new_ads():
     session = requests.Session(impersonate="chrome124")
 
-    # Priprema proxy podešavanja ako je PROXY_URL prosleđen
     proxies = {
         "http": PROXY_URL,
         "https": PROXY_URL
@@ -80,7 +84,7 @@ def scrape_and_notify_new_ads():
     ]
 
     previously_seen_ads = load_seen_ads()
-    updated_seen_ads = set(previously_seen_ads)
+    current_run_active_ads = set()  # Sakupljamo sve oglase koji TRENUTNO postoje na sajtu
     
     new_ads_found = []
     seen_ids_in_this_run = set()
@@ -124,11 +128,14 @@ def scrape_and_notify_new_ads():
             page_ads_count += 1
             new_ids_on_this_page += 1
 
-            updated_seen_ads.add(ad_id)
+            # Dodajemo oglas u skup trenutno aktivnih na sajtu
+            current_run_active_ads.add(ad_id)
 
+            # Ako je oglas već zabeležen ranije, preskačemo slanje poruke
             if ad_id in previously_seen_ads:
                 continue
 
+            # Izvlačenje naslova i linka
             title_element = ad.find(["h2", "h8", "h3"], class_=["ad-title", "product-title"])
             if not title_element:
                 title_element = ad.find("a", class_="product-link") or ad.find("a", class_="ad-link")
@@ -190,10 +197,14 @@ def scrape_and_notify_new_ads():
             time.sleep(1)
     else:
         print("ℹ️ Nema novih oglasa od poslednje provere.")
+        # Slanje obaveštenja na Telegram da je provera izvršena i da nema novih stanova
+        status_msg = f"ℹ️ <b>Halo Oglasi Provera:</b> Trenutno nema novih stanova u ponudi. (Aktivno oglasa: {len(current_run_active_ads)})"
+        send_telegram_message(status_msg)
 
     print("==================================================")
 
-    save_seen_ads(updated_seen_ads)
+    # Čuvamo SAMO trenutno aktivne oglase (oglasi koji su u međuvremenu obrisani/skinuti se automatski brišu iz fajla)
+    save_seen_ads(current_run_active_ads)
 
 if __name__ == "__main__":
     scrape_and_notify_new_ads()
