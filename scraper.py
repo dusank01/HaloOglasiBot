@@ -2,9 +2,9 @@ import os
 import json
 import time
 import random
-import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
+from curl_cffi import requests  # Koristimo curl_cffi umesto običnog requests-a
 
 # Učitavanje varijabli iz .env fajla
 load_dotenv()
@@ -18,11 +18,9 @@ CACHE_FILE = "seen_ads.json"
 if not all([BASE_SEARCH_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_IDS_RAW]):
     raise ValueError("❌ Neke od varijabli nisu podešene u .env fajlu!")
 
-# Razdvajanje više Chat ID-jeva iz stringa (npr. "123456,789012" -> ["123456", "789012"])
 TELEGRAM_CHAT_IDS = [chat_id.strip() for chat_id in TELEGRAM_CHAT_IDS_RAW.split(",") if chat_id.strip()]
 
 def load_seen_ads():
-    """Učitava prethodno sačuvane ID-jeve oglasa iz JSON fajla."""
     if os.path.exists(CACHE_FILE):
         try:
             with open(CACHE_FILE, "r", encoding="utf-8") as f:
@@ -32,7 +30,6 @@ def load_seen_ads():
     return set()
 
 def save_seen_ads(seen_ads):
-    """Čuva osveženi skup ID-jeva oglasa u JSON fajl."""
     try:
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(list(seen_ads), f, indent=2, ensure_ascii=False)
@@ -41,7 +38,6 @@ def save_seen_ads(seen_ads):
         print(f"❌ Greška pri čuvanju {CACHE_FILE}: {e}")
 
 def send_telegram_message(text):
-    """Šalje poruku na sve podešene Telegram naloge."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     
     for chat_id in TELEGRAM_CHAT_IDS:
@@ -52,6 +48,7 @@ def send_telegram_message(text):
             "disable_web_page_preview": False
         }
         try:
+            # Običan requests za Telegram API ne pravi problem
             requests.post(url, json=payload, timeout=10)
         except Exception as e:
             print(f"Greška pri slanju poruke na CHAT_ID {chat_id}: {e}")
@@ -62,21 +59,8 @@ def get_page_url(base_url, page_num):
     return f"{base_url}&page={page_num}" if "?" in base_url else f"{base_url}?page={page_num}"
 
 def scrape_and_notify_new_ads():
-    headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-    "Accept-Language": "sr-RS,sr;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Connection": "keep-alive",
-    "Upgrade-Insecure-Requests": "1",
-    "Sec-Ch-Ua": '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
-    "Sec-Ch-Ua-Mobile": "?0",
-    "Sec-Ch-Ua-Platform": '"Windows"',
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "Sec-Fetch-User": "?1"
-}
+    # Kreiramo sesiju koja imitira Chrome 120 na nivou TLS rukovanja
+    session = requests.Session(impersonate="chrome120")
 
     IGNORE_CLASSES = [
         "banner-list-item", 
@@ -100,12 +84,14 @@ def scrape_and_notify_new_ads():
         url = get_page_url(BASE_SEARCH_URL, page)
         print(f"📄 Učitavam stranicu {page}: {url}")
 
-        session = requests.Session()
-        session.headers.update(headers)
-
-        response = session.get(url, timeout=15)
-        if response.status_code != 200:
-            print(f"❌ Greška pri dohvatanju stranice {page}: status {response.status_code}")
+        try:
+            # Slanje zahteva sa potpunom imitacijom Chrome pregledača
+            response = session.get(url, timeout=15)
+            if response.status_code != 200:
+                print(f"❌ Greška pri dohvatanju stranice {page}: status {response.status_code}")
+                break
+        except Exception as e:
+            print(f"❌ Izuzetak pri dohvatanju stranice {page}: {e}")
             break
 
         soup = BeautifulSoup(response.text, "html.parser")
@@ -174,7 +160,9 @@ def scrape_and_notify_new_ads():
 
         print(f"   ✅ Na strani {page} analizirano {page_ads_count} pravih oglasa.\n")
         page += 1
-        time.sleep(random.uniform(2.5, 4.5))
+        
+        # Nasumična pauza od 2 do 4 sekunde između stranica radi prirodnijeg ponašanja
+        time.sleep(random.uniform(2.0, 4.0))
 
     print("==================================================")
     if new_ads_found:
@@ -193,7 +181,6 @@ def scrape_and_notify_new_ads():
                 f"🕒 <b>Objavljeno:</b> {ad['date']}\n\n"
                 f"🔗 <a href='{ad['link']}'>Pogledaj oglas na Halo Oglasima</a>"
             )
-            # Slanje poruke svim nalozima
             send_telegram_message(msg)
             time.sleep(1)
     else:
