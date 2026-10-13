@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import random
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
@@ -99,7 +100,10 @@ def scrape_and_notify_new_ads():
         url = get_page_url(BASE_SEARCH_URL, page)
         print(f"📄 Učitavam stranicu {page}: {url}")
 
-        response = requests.get(url, headers=headers)
+        session = requests.Session()
+        session.headers.update(headers)
+
+        response = session.get(url, timeout=15)
         if response.status_code != 200:
             print(f"❌ Greška pri dohvatanju stranice {page}: status {response.status_code}")
             break
@@ -170,7 +174,7 @@ def scrape_and_notify_new_ads():
 
         print(f"   ✅ Na strani {page} analizirano {page_ads_count} pravih oglasa.\n")
         page += 1
-        time.sleep(1)
+        time.sleep(random.uniform(2.5, 4.5))
 
     print("==================================================")
     if new_ads_found:
