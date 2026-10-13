@@ -3,7 +3,7 @@ name: Halo Oglasi Scraper
 on:
   schedule:
     # Pokreće se na svakih 30 minuta od 04:00 do 22:00 UTC (~06:00 do 24:00 lokalno)
-    - cron: '15 * * * *'
+    - cron: '*/10 * * * *'
   workflow_dispatch:
 
 jobs:
